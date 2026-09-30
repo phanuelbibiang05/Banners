@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Banners</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#0a0a0a;color:#f2f2f2;font-family:system-ui,sans-serif;padding-bottom:90px}
+.wrap{max-width:640px;margin:0 auto;padding:14px}
+h1{color:#22c55e;letter-spacing:3px;margin:0}
+.sub{color:#999;margin:4px 0 16px}
+.card{background:#151515;border:1px solid #242424;border-radius:14px;padding:14px;margin-bottom:12px}
+input,select{width:100%;padding:12px;margin:6px 0;background:#0f0f0f;color:#fff;border:1px solid #333;border-radius:10px;font-size:16px}
+button{background:#22c55e;color:#04140a;border:0;border-radius:10px;padding:12px 16px;font-weight:700;font-size:15px;cursor:pointer}
+button.ghost{background:#1c1c1c;color:#22c55e;border:1px solid #22c55e}
+a{color:#22c55e;cursor:pointer;display:block;margin-top:12px;text-align:center}
+.top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.pts{color:#22c55e;font-weight:700}
+.chips{display:flex;gap:8px;overflow-x:auto;padding:4px 0 12px}
+.chip{background:#1c1c1c;color:#ccc;border:1px solid #333;padding:8px 14px;border-radius:20px;white-space:nowrap;cursor:pointer}
+.chip.on{background:#22c55e;color:#04140a;border-color:#22c55e}
+.song{display:flex;gap:12px;align-items:center}
+.cover{width:56px;height:56px;border-radius:10px;background:#0f2a18;object-fit:cover;flex:none}
+.info{flex:1;min-width:0}
+.t{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.m{color:#999;font-size:13px}
+#player{position:fixed;left:0;right:0;bottom:0;background:#111;border-top:1px solid #22c55e;padding:10px 14px;display:none}
+#player audio{width:100%}
+</style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<div id="player"><div class="m" id="now"></div><audio id="au" controls></audio></div>
+
+<script>
+const SUPABASE_URL = "COLLE_ICI_TON_URL";
+const SUPABASE_KEY = "COLLE_ICI_TA_CLE_ANON";
+const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const app = document.getElementById('app');
+const au = document.getElementById('au');
+const GENRES = ['Tous','Makossa','Bikutsi','Afro','Gospel','Rap','Autre'];
+let me = null, filter = 'Tous', songs = [];
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const digits = p => p.replace(/\D/g, '');
+
+function showAuth(mode) {
+  const signup = mode === 'signup';
+  app.innerHTML = `
+    <div class="card" style="margin-top:40px">
+      <h1>BANNERS</h1>
+      <p class="sub">La musique camerounaise nous rassemble</p>
+      ${signup ? '<input id="name" placeholder="Ton nom ou nom d\'artiste">' : ''}
+      <input id="phone" type="tel" placeholder="Numéro de téléphone (ex : 6XXXXXXXX)">
+      <input id="pass" type="password" placeholder="Mot de passe (6 caractères min.)">
+      ${signup ? '<select id="role"><option value="listener">Auditeur (écouter)</option><option value="artist">Artiste (publier)</option></select>' : ''}
+      <button id="go" style="width:100%;margin-top:8px">${signup ? 'Créer mon compte' : 'Me connecter'}</button>
+      <a id="sw">${signup ? 'J\'ai déjà un compte' : 'Créer un compte'}</a>
+    </div>`;
+  document.getElementById('sw').onclick = () => showAuth(signup ? 'login' : 'signup');
+  document.getElementById('go').onclick = async () => {
+    const phone = digits(document.getElementById('phone').value);
+    const password = document.getElementById('pass').value;
+    if (phone.length < 8) return alert('Numéro de téléphone invalide.');
+    if (password.length < 6) return alert('Mot de passe trop court (6 caractères min.).');
+    const email = phone + '@banners.app';
+    let res;
+    if (signup) {
+      const name = document.getElementById('name').value.trim();
+      if (!name) return alert('Entre ton nom.');
+      const role = document.getElementById('role').value;
+      res = await db.auth.signUp({ email, password, options: { data: { name, phone, role } } });
+    } else {
+      res = await db.auth.signInWithPassword({ email, password });
+    }
+    if (res.error) return alert('Erreur : ' + res.error.message);
+    loadApp();
+  };
+}
+
+async function loadApp() {
+  const { data: { session } } = await db.auth.getSession();
+  if (!session) return showAuth('login');
+  const { data, error } = await db.from('profiles').select('*').eq('id', session.user.id).single();
+  if (error || !data) { alert('Profil introuvable : ' + (error ? error.message : '')); return showAuth('login'); }
+  me = data;
+  render();
+  loadSongs();
+}
+
+function headerHtml() {
+  return `<div class="top"><div><h1>BANNERS</h1></div>
+    <div style="text-align:right"><div>${esc(me.name)}</div>
+    <div class="pts">${me.points} points${me.role === 'artist' ? ' · ' + me.earnings + ' FCFA gagnés' : ''}</div></div></div>`;
+}
+
+function render() {
+  app.innerHTML = `
+    <div class="card" id="head">${headerHtml()}
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="ghost" id="rech">+100 points (test)</button>
+        <button class="ghost" id="out">Déconnexion</button>
+      </div>
+    </div>
+    ${me.role === 'artist' ? `
+    <div class="card"><b>Publier une chanson</b>
+      <input id="ptitle" placeholder="Titre">
+      <select id="pgenre">${GENRES.slice(1).map(g => `<option>${g}</option>`).join('')}</select>
+      <div class="m">Fichier audio</div><input id="paudio" type="file" accept="audio/*">
+      <div class="m">Photo de couverture (facultatif)</div><input id="pcover" type="file" accept="image/*">
+      <button id="pub" style="width:100%;margin-top:8px">Publier</button>
+    </div>` : ''}
+    <div class="chips">${GENRES.map(g => `<span class="chip ${g === filter ? 'on' : ''}" data-g="${g}">${g}</span>`).join('')}</div>
+    <div id="list"></div>`;
+  document.getElementById('out').onclick = async () => { await db.auth.signOut(); au.pause(); document.getElementById('player').style.display = 'none'; showAuth('login'); };
+  document.getElementById('rech').onclick = async () => {
+    const { data, error } = await db.rpc('add_test_points');
+    if (error) return alert(error.message);
+    me.points = data; refreshHeader();
+  };
+  document.querySelectorAll('.chip').forEach(c => c.onclick = () => { filter = c.dataset.g; render(); loadSongs(); });
+  if (me.role === 'artist') document.getElementById('pub').onclick = publish;
+}
+
+function refreshHeader() { document.getElementById('head').firstElementChild.outerHTML = headerHtml(); }
+
+async function loadSongs() {
+  let q = db.from('songs').select('*, profiles(name)').order('created_at', { ascending: false });
+  if (filter !== 'Tous') q = q.eq('genre', filter);
+  const { data, error } = await q;
+  if (error) return alert(error.message);
+  songs = data || [];
+  const list = document.getElementById('list');
+  if (!songs.length) { list.innerHTML = '<p class="sub">Aucune chanson pour le moment.</p>'; return; }
+  list.innerHTML = songs.map(s => `
+    <div class="card song">
+      ${s.cover_url ? `<img class="cover" src="${esc(s.cover_url)}">` : '<div class="cover"></div>'}
+      <div class="info"><div class="t">${esc(s.title)}</div>
+        <div class="m">${esc(s.profiles ? s.profiles.name : '')} · ${esc(s.genre)} · ${s.plays} écoutes</div></div>
+      <button data-id="${s.id}">▶</button>
+    </div>`).join('');
+  list.querySelectorAll('button[data-id]').forEach(b => b.onclick = () => play(b.dataset.id));
+}
+
+async function play(id) {
+  const s = songs.find(x => x.id === id);
+  const { data, error } = await db.rpc('play_song', { song: id });
+  if (error) return alert(error.message.includes('points') ? 'Points insuffisants. Recharge tes points.' : error.message);
+  me.points = data; refreshHeader();
+  au.src = s.audio_url; au.play();
+  document.getElementById('now').textContent = s.title + ' · ' + (s.profiles ? s.profiles.name : '');
+  document.getElementById('player').style.display = 'block';
+}
+
+async function upload(file) {
+  const path = me.id + '/' + Date.now() + '-' + file.name.replace(/[^\w.]/g, '_');
+  const { error } = await db.storage.from('media').upload(path, file);
+  if (error) throw error;
+  return db.storage.from('media').getPublicUrl(path).data.publicUrl;
+}
+
+async function publish() {
+  const title = document.getElementById('ptitle').value.trim();
+  const genre = document.getElementById('pgenre').value;
+  const audioFile = document.getElementById('paudio').files[0];
+  const coverFile = document.getElementById('pcover').files[0];
+  if (!title || !audioFile) return alert('Le titre et le fichier audio sont obligatoires.');
+  const btn = document.getElementById('pub');
+  btn.disabled = true; btn.textContent = 'Envoi en cours...';
+  try {
+    const audio_url = await upload(audioFile);
+    const cover_url = coverFile ? await upload(coverFile) : null;
+    const { error } = await db.from('songs').insert({ artist_id: me.id, title, genre, audio_url, cover_url });
+    if (error) throw error;
+    render(); loadSongs();
+  } catch (e) {
+    alert('Erreur : ' + e.message);
+    btn.disabled = false; btn.textContent = 'Publier';
+  }
+}
+
+loadApp();
+</script>
+</body>
+</html>
